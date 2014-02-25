@@ -1,4 +1,4 @@
 sres
 ====
 
-(Sudan Real-EState) module Allows users to create, modify, and delete realestate nodes
+(Sudan Real-EState) Drupal module Allows users to create, modify, and delete realestate nodes
