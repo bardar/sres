@@ -1,0 +1,51 @@
+<?php
+// $Id: sres.install,v 1.44.2.10 2010/12/03 23:14:04 bardar Exp $
+
+
+
+
+/**
+ * Implementation of hook_schema().
+ */
+function sres_schema(){
+  $schema;
+
+  $schema['sres'] = array(
+    'description' => t('Cashing sort view for node teser and full view to real-estate nodes'),
+    'fields' => array(
+      'nid' => array(
+        'description' => t('Node that being cashed'),
+        'type' => 'int',
+        'not null' => TRUE,
+      ),
+      'cashe' => array(
+        'description' => t('Short view content'),
+        'type' => 'text',
+        'not null' => TRUE,
+      ),
+      'flag' => array(
+        'description' => t('To add cashe conditions'),
+        'type' => 'int',
+        'not null' => TRUE,
+      ),
+    ),
+    'primary key' => array('nid'),
+  );
+  
+  
+  return $schema;
+}
+
+/**
+ * Implementation of hook_install().
+ */
+function sres_install(){
+  drupal_install_schema('sres');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function sres_uninstall(){
+  drupal_uninstall_schema('sres');
+}
