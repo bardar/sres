@@ -1,0 +1,1196 @@
+<?php
+// $Id: sres.module,v 1.44.2.10 2010/12/03 23:14:04 bardar Exp $
+
+
+
+
+/**
+ * Implementation of hook_perm().
+ */
+function sres_perm(){
+  return array('add real-estate','forms navigation session','admin SRES');
+}
+
+
+/**
+ * Implementation of hook_block()
+ */
+function sres_block($op = 'list', $delta = 0, $edit = array()) {
+  switch ($op) {
+    case 'list':
+	  $blocks['by_hits'] = array(
+        'info' => t('SRES : Places by hits'),
+        'cache' => BLOCK_NO_CACHE,
+       );
+	   $blocks['sres_parent_tree'] = array(
+        'info' => t('SRES : Parent Tree'),
+        'cache' => BLOCK_NO_CACHE,
+       ); 
+      return $blocks;
+ 	case 'view':
+	  $block = array();
+	  switch ($delta) {
+        case 'by_hits':
+		  //$block['subject'] = t('المناطق الاكثر طرقا للبيع');
+          $block['content'] = sres_places_view();
+		  break;
+		case 'sres_parent_tree':
+		  $block['content'] = sres_parent_tree_view();
+		  break;
+	  } 	  
+	  return $block;
+  }
+}
+function sres_get_rs($b_nid){
+  return db_fetch_object(db_query('SELECT b.field_sres_building_rs_nid as nid FROM {content_type_sres_building} b WHERE  b.nid = %d',$b_nid))->nid;
+}
+function sres_parent_tree_view($rs_nid = 0){	
+	
+	//$url_nid = nodereference_url_get_nid('sres_building_rs');
+	if($_GET['sres_building_rs']){
+		$rs_nid = $_GET['sres_building_rs'];
+		$node = node_load(array('nid' => $rs_nid));
+	}else{	
+		if (arg(0) == 'node' && is_numeric(arg(1))) {
+	  	  $nid = arg(1);
+		  $node = node_load(array('nid' => $nid));
+		  //dsm();
+		  if ($node->type == 'sres_building'){
+		  	//$output .= 'test'.$node->type;
+		  	$rs_nid = $node->field_sres_building_rs[0]['nid'];// sres_get_rs($nid);	  	
+		  	//if ($url_nid) $rs_nid = $url_nid;
+			$node = node_load(array('nid' => $rs_nid));
+		  }else if ($node->type == 'sres_unit'){
+		    //dsm($node->field_sres_units_building[0]['nid']);
+			$rs_nid = sres_get_rs($node->field_sres_units_building[0]['nid']);
+			$node = node_load(array('nid' => $rs_nid));
+		  }else $rs_nid = $nid;
+		}
+	}
+	sres_realesate_update($rs_nid ,NULL,NULL,&$sres_building);
+	$output = "<ul class='sres-tree' id='sres-tree-sr-ul'><li class='sres-tree-sr-li sres-tree'>".l(" (عقار)".$node->title, "node/".$node->nid."/edit")."<ul class='sres-tree' id='sres-tree-building-ul'>";
+	//$output .= "test";	
+	foreach ($sres_building as $building) {	  
+	  $output .= "<li class='";
+	  if ($building['nid'] == $nid) $output .= 'sres-tree-current ';
+	  $output .= "sres-tree-building-li sres-tree'>".l("(مبنى) ".$building['title'], "node/".$building['nid']."/edit");
+	  $output .= "<ul class='sres-tree' id='sres-tree-unit-ul'>";
+	  foreach($building['allfloors'] as $floor_all) {
+	  	foreach($floor_all['units'] as $unit) {
+	  		$output .= "<li class='";
+			if ($unit['nid'] == $nid) $output .= 'sres-tree-current ';
+	  		$output.= "sres-tree-unit-li sres-tree'>".l("(وحدة) ".$unit['title'], "node/".$unit['nid']."/edit");
+			$output .= "</li>";
+		}		
+	  }
+	  $output .= "<li class='sres-tree-unit-li sres-tree'>".l("وحدة جديدة", "node/add/sres-unit",array('query' => array('sres_units_building' => $building['nid'],'sres_building_rs' => $node->nid)))."</li>";
+	  $output .= "</ul>";//unit
+	  $output .= "</li>";
+	}
+	$output .= "<li>".l("مبنى جديد", "node/add/sres-building",array('query' => array('sres_building_rs' => $node->nid)))."</li>";
+	$output .="</ul></li></ul>";//rs
+	return $output;
+}
+
+function sres_places_view($type = 'all' ,$view_type = 'all' ,$sortby = 'hits',$items_per_cal = 7,$max_cal = 3) {
+  //$output = '<div id="sres-places-view" class= "sres-places-'.$term.' sres-places-'.$term.'">';
+  //dsm(_statistics_link('node/28'));
+  //$output = $output.statistics_get('28');  
+  $rs_places = db_query('SELECT r.field_sres_rs_address_place_value as place FROM {content_type_sres_realesate} r GROUP BY place');
+  $index = 0;
+  $first_time = true;
+  $output .= '<div class="body sres-places-'.$term.' sres-places-'.$term.'">';
+  $output .= '<ul class="city-list">';
+  $max_items = $items_per_cal * $max_cal;
+  while ($rs_place = db_fetch_object($rs_places)){
+     if($index > $max_items) break;
+  	//dsm($rs_place->place);  	
+	//if ($cal % $index) $output .= '<ul class="city-list">';
+	if(!(($index+1) % $items_per_cal)) $output .= '</ul><ul class="city-list">';
+	$output .= '<li> '.l($rs_place->place." (إجار)", "featured_filter/", array('html' => true, 'query' => 'place='.$rs_place->place)).'</li>';
+    $output .= '<li> '.l($rs_place->place. " (بيع)", "featured_filter/", array('html' => true, 'query' => 'place='.$rs_place->place.'&view_type=8')).'</li>';
+    //$output .= '<li> <a class="primaryText" href="featured_filter?place='.$rs_place->place.'">'.$rs_place->place.'</a></li>';	            
+    $index++; 	
+  }
+  $output .= '</ul>';
+  if(($index > $max_items)) $output .= '<br><div id="all_cities"><a class="primaryText" id="ctl00_ctl00_cphMainContent_cphMainContent_cities_findHomeUrl" href="#">'.t('كل المدن').'</a></div>';
+  $output .= '</div>';
+  return $output;
+}
+
+/**
+ * Implementation of hook_menu().
+ */
+function sres_menu() {
+  $items = array();  
+  
+  $items['admin/settings/sres'] = array(
+    'title' => t('SRES Settings'),
+    'description' => t('Configration Sudan real-estate module'),
+    'page callback'=> 'sres_admin_settings',
+    'access callback' => 'user_access',
+    'access arguments' => array('administer site configration'),
+    'file' => 'sres.inc',
+  );
+  
+  $items['addnew/Pricing/'] = array(
+    'title' => 'Pricing',
+    'page callback' => 'sres_pricing_tab',
+    'access callback' => FALSE,
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'sres.inc',
+  );
+
+  $items['sreshome'] = array(    
+    'page callback' => 'sres_home',
+    'access callback' => TRUE,
+    'file' => 'sres.inc',    
+  );
+  
+  $items['place/autocomplete'] = array(
+    'title' => 'Pricing',
+    'page callback' => 'sres_place_autocomplete',
+    'access callback' => TRUE,   
+    'type' => MENU_CALLBACK,
+    'file' => 'sres.inc',    
+  ); 
+
+  $items['inherit/rs'] = array(
+    'title' => 'Pricing',
+    'page callback' => 'sres_inherit_from_rs',
+    'access callback' => 'user_access',
+    'access arguments' => array('add real-estate'),
+    'type' => MENU_CALLBACK,
+    'file' => 'sres.inc',    
+  );
+    
+  return $items;
+}
+
+/**
+ * Implementation of hook_nodeapi().
+ */
+function sres_nodeapi(&$node, $op) {
+  //dsm(arg(2));
+  //if ($op == 'insert' &&  $node->type == 'sres_realesate'  )  
+  
+  //dsm($op);
+    
+  if (($op == 'insert' || $op =='update' ) && ($node->type == 'sres_realesate' || $node->type == 'sres_building' || $node->type == 'sres_unit')) {
+    //$node->teaser_include = 0;
+    //$node->title = taxonomy_get_term($node->taxonomy[2])->name.': '.$node->title.' #'.$node->nid;
+    // dsm($node->taxonomy[2]['name']);   
+    if ($node->type == 'sres_realesate'){//field_sres_rs_address_place
+      $node->title = taxonomy_get_term($node->taxonomy[2])->name.''.$node->title.' ب'.$node->field_sres_rs_address_place[0]['value'].' #'.$node->nid;
+      $node->teaser_js = sres_realesate_update($node->nid,$node->taxonomy[2]);      
+      if (!isset($_SESSION['rs'])) {
+        $_SESSION['rs'] = array();
+  	  }
+  	  $rs = array();      
+      $rs['nid']  = $node->nid;
+      $rs['title'] = $node->title;
+      $_SESSION['rs'] = $rs;     
+        	   
+    }else if ($node->type == 'sres_building'){//field_sres_building_rs
+      $place = db_fetch_object(db_query('SELECT r.field_sres_rs_address_place_value as place FROM {content_type_sres_realesate} r WHERE r.nid = %d;', $node->field_sres_building_rs[0]['nid']))->place;
+      $node->title = taxonomy_get_term($node->taxonomy[2])->name.''.$node->title.' ب'.$place.' #'.$node->nid; 
+      $node->teaser_js = sres_building_update($node->nid,$node->taxonomy[2]);      
+      if (!isset($_SESSION['building'])) {
+        $_SESSION['building'] = array();
+      }
+      $building = array();      
+      $building['nid']  = $node->nid;
+      $building['title'] = $node->title;
+      $_SESSION['building']= $building;     
+      
+    }else if ($node->type == 'sres_unit'){
+      //dsm($node);
+      $place = db_fetch_object(db_query('SELECT r.field_sres_rs_address_place_value as place FROM {content_type_sres_realesate} r ,{content_type_sres_building} b WHERE r.nid = b.field_sres_building_rs_nid AND b.nid = %d LIMIT 1;', $node->field_sres_units_building[0]['nid']))->place;
+      $node->title = taxonomy_get_term($node->taxonomy[2])->name.''.$node->title.' ب'.$place.' #'.$node->nid;
+      $node->teaser_js = sres_unit_update($node->nid,$node->taxonomy[2]);
+    }  
+    //$node->body = $node->teaser_js.'<!--break-->'. drupal_substr($node->body,drupal_strlen('<!--break-->')+strpos($node->body, '<!--break-->'));
+    //dsm(strpos($node->body, '<!--break-->'));
+    $node->body = '<!--break-->'. drupal_substr($node->body,drupal_strlen('<!--break-->')+strpos($node->body, '<!--break-->'));
+    //dsm($node->body);
+    db_query('UPDATE {node}
+	   SET title = "%s"
+	   WHERE nid = %d;',$node->title,$node->nid);
+    db_query('UPDATE {node_revisions}
+	   SET title = "%s",teaser = "%s" , body = "%s"
+	   WHERE nid = %d;',$node->title,$node->teaser_js,$node->body,$node->nid); 
+       
+    switch($node->type){
+        case 'sres_unit' : 
+          $rs_nid = db_fetch_object(db_query('SELECT b.field_sres_building_rs_nid as nid FROM {content_type_sres_building} b WHERE b.nid = %d;',$node->field_sres_units_building[0]['nid']))->nid ;
+          $b_nid = $node->field_sres_units_building[0]['nid'];
+          //dsm($rs_nid);
+          break;
+        case 'sres_building' :
+          $rs_nid = $node->field_sres_building_rs[0]['nid'];
+          break;
+    }
+    
+    if($b_nid) {      
+      db_query('UPDATE {node_revisions}
+        SET teaser = "%s"
+	    WHERE nid = %d;',sres_building_update($b_nid),$b_nid); 
+    }
+    if($rs_nid) {      
+      db_query('UPDATE {node_revisions}
+        SET teaser = "%s"
+	    WHERE nid = %d;',sres_realesate_update($rs_nid),$rs_nid); 
+    }
+    
+  }else if ($op == 'load' && ($node->type == 'sres_realesate' || $node->type == 'sres_building' || $node->type == 'sres_unit')) {
+    //$sres_rs_type = 'rent';   
+      
+    if (arg(2) == 'sale') {
+      $sres_rs_type = 'للبيع'; 
+      $node->title = drupal_substr($node->title,0,drupal_strlen($node->title)-drupal_strlen('#'.$node->nid));
+      $node->title = $node->title.' '.$sres_rs_type.' #'.$node->nid;      
+      $node->teaser = '';
+      $node->body = '<!--break-->';
+    }else if (arg(2) == 'rent'){
+      $sres_rs_type = 'للإيجار';
+      $node->title = drupal_substr($node->title,0,drupal_strlen($node->title)-drupal_strlen('#'.$node->nid));
+      $node->title = $node->title.' '.$sres_rs_type.' #'.$node->nid;
+      $node->teaser = '';
+      $node->body = '<!--break-->';
+    }
+    //dsm($node);
+    //$node->body = '';
+    //$item_node = node_load($b_nid);
+    //$item_node = node_build_content($node);
+    //dsm($item_node);      
+  }else if ($op == 'view'){
+    //$sres_module_path = ;
+    //$node->body = '';
+    drupal_add_js(drupal_get_path('module', 'sres').'/js/collapse.js');
+    jquery_ui_add('jquery.cycle.min');
+    //dsm();
+  }
+}
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function sres_form_alter(&$form, &$form_state, $form_id) {
+  //dsm($form_id);
+  //dsm($_SESSION['rs']);
+  $sres_module_path = drupal_get_path('module', 'sres');
+  if ($form_id == 'views_exposed_form' && $form['#id'] == 'views-exposed-form-Featured-filter-page-1'){
+  	//dsm($form);
+  	$form['place']['#autocomplete_path'] = "place/autocomplete";
+	//$form['place']['#default_value'] = 'test';//arg('place');  
+	//$form['submit']['#wieght'] = -10;
+  	//dsm($form);
+  	
+    //jquery_ui_add('jquery-1.4.4');
+    //drupal_add_js(drupal_get_path('module', 'sres').'js/jquery-1.4.4.js');
+    	
+    drupal_add_css($sres_module_path.'/css/jquery.ui.button.css');    
+    drupal_add_css($sres_module_path.'/css/jquery.ui.theme.css');
+    drupal_add_css($sres_module_path.'/css/jquery.ui.autocomplete.css');
+    
+    //drupal_add_js(drupal_get_path('module', 'sres').'js/jquery-1.4.4.js');
+    //drupal_add_css($sres_module_path.'/css/jquery.ui.core.css');
+    /*drupal_add_css(drupal_get_path('module', 'sres').'/css/demos.css');
+    drupal_add_js(drupal_get_path('module', 'sres').'js/jquery-1.4.4.js');
+    drupal_add_js(drupal_get_path('module', 'sres').'/js/jquery.ui.core.js');
+    drupal_add_js(drupal_get_path('module', 'sres').'/js/jquery.ui.widget.js');
+    drupal_add_js(drupal_get_path('module', 'sres').'/js/jquery.ui.button.js');
+    drupal_add_js(drupal_get_path('module', 'sres').'/js/jquery.ui.position.js');
+    drupal_add_js(drupal_get_path('module', 'sres').'/js/jquery.ui.autocomplete.js');
+    drupal_add_js(drupal_get_path('module', 'sres').'/js/select.js');*/
+    
+    jquery_ui_add('jquery.cycle.min');
+    jquery_ui_add('jquery.ui.core.min');
+    jquery_ui_add('jquery.ui.widget.min');    
+    jquery_ui_add('jquery.ui.button.min');
+    jquery_ui_add('jquery.ui.position.min');
+    jquery_ui_add('jquery.ui.autocomplete.min');
+    //drupal_add_js(drupal_get_path('module', 'sres').'/js/select.js');
+
+    //dsm($form['#submit']);
+    // $form['submit']['#wieght'] = -10;
+    /*$temp_element = $form['price'];
+    $form['price'] = $form['submit'];
+    $form['submit'] = $temp_element;
+    //dsm($form['submit']);
+    //dsm($form['place']);*/
+  }
+
+  if ($form_id == 'sres_realesate_node_form' || $form_id == 'sres_building_node_form' || $form_id == 'sres_unit_node_form') {
+    //dsm($form);
+    $form['title']['#default_value'] = '';    
+    $form['title']['#required'] = false;
+    //dsm(strpos($form['body_field']['body']['#default_value'], '<!--break-->'));
+    //$form['body_field']['body']['#default_value'] = '<!--break-->'.drupal_substr($form['body_field']['body']['#default_value'],drupal_strlen('<!--break-->')+strpos($form['body_field']['body']['#default_value'], '<!--break-->')-31);
+    
+    if ( $form['field_sres_rs_address_place'] ) $form['field_sres_rs_address_place'][0]['#autocomplete_path'] = "place/autocomplete";
+    if ( !user_access('admin SRES') ) {
+      $form['title']['#type'] = 'hidden';
+      //if ( $form['field_sres_rs_address_place'] ) $form['field_sres_rs_address_place'][0]['#type'] = 'hidden'; 
+    }     
+  }  
+  
+   
+  if ($form_id == 'pageroute_form' && $form['#node']->type == 'sres_realesate' ){ 
+    foreach ($form['taxonomy'] as $taxonomy){
+      if ($taxonomy['#type'] == 'fieldset') $form['group_sres_rs_for_site']['taxonomy'][] = $taxonomy;
+      //$taxonomy = NULL; 
+    }  
+    //$form['taxonomy'] = NULL;
+    $form['group_sres_rs_for_site']['body_field'] = $form['body_field'];
+    $form['group_sres_rs_for_site']['options'] = $form['options'];
+    $form['options'] = NULL;
+    $form['body_field'] = NULL;   
+    
+    
+    //dsm($form);
+  }
+  if ($form_id == 'pageroute_form' && $form['#node']->type == 'sres_unit' ){
+    if ( $_SESSION['building'] ) { 
+    	$form['field_sres_units_building'][0]['#default_value']['nid'] = $_SESSION['building']['nid'];
+    	//if ( !user_access('admin SRES') ) $form['field_sres_units_building'][0]['#type'] = 'hidden'; 
+    }
+  }
+  if ($form_id == 'pageroute_form' && $form['#node']->type == 'sres_building' ){ 
+    foreach ($form['taxonomy'] as $taxonomy){
+      if ($taxonomy['#type'] == 'fieldset') $form['group_sres_building_for_site']['taxonomy'][] = $taxonomy;
+      //$taxonomy = NULL; 
+    }  
+    //$form['taxonomy'] = NULL;
+    $form['group_sres_building_for_site']['body_field'] = $form['body_field'];
+    $form['group_sres_building_for_site']['options'] = $form['options'];
+    $form['options'] = NULL;
+    $form['body_field'] = NULL;
+  
+    if ( $_SESSION['rs'] ) { 
+    	$form['field_sres_building_rs'][0]['#default_value']['nid'] = $_SESSION['rs']['nid'];
+    	if ( !user_access('admin SRES') ) $form['field_sres_building_rs'][0]['#type'] = 'hidden'; 
+    }
+  
+    drupal_add_css($sres_module_path.'/js/select.js');
+    /*foreach ($_SESSION['rs'] as $rs){
+      $form['sres_building_link_rs_'.$rs['nid']] = array(
+        '#type' => 'button',      
+        '#id' => 'sres_building_link_rs_'.$rs['nid'],
+        '#onclick' => 'return FALSE;',
+        '#value' => t(': ربط المبنى الحالي بالعقار ').$rs['title']." : ".$rs['nid'],      
+        '#weight' => -50,
+      );
+    }*/
+    /*$form['sres_building_inherit_rs'] = array(
+      '#type' => 'button',      
+      '#id' => 'sres_building_inherit_rs',
+      '#value' => t('نقل'),      
+      '#weight' => 35,
+    );*/
+  }
+}
+/**
+ * 
+ * 
+ * 
+ * 
+ */
+function sres_realesate_node_form_submit($form, &$form_state) {
+  $form_state['values']['teaser_include'] = 0;
+}
+/**
+ * 
+ * 
+ * 
+ * 
+ */
+function sres_building_node_form_submit($form, &$form_state) {
+  $form_state['values']['teaser_include'] = 0;
+}
+/**
+ * 
+ * 
+ * 
+ * 
+ */
+function sres_unit_node_form_submit($form, &$form_state) {
+  $form_state['values']['teaser_include'] = 0;
+}
+
+
+function sres_settings_form(){
+  $form = array();
+  
+  $form['sres_phone_number'] = array(
+  	'#type' => 'textfield',
+    '#title' => t('Golobal phone number'),
+  	'#description' => t('One place to chane all instans of global phone number'),
+    '#default_value' => variable_get('sres_phone_number','+249925606095'),
+    '#required' => TRUE,
+  );
+  $form['sres_settings_submit'] = array(
+  	'#type' => 'submit',
+  	'#value' => t('Save settings'),
+  );
+  
+  return $form;
+}
+
+function sres_settings_form_submit(&$form, &$form_state){
+  variable_set('sres_phone_number',$form_state['values']['sres_phone_number']); 
+}
+
+
+
+function sres_number_to_txt($sres_number,$sres_word_zero,$sres_word_one,$sres_word_two,$sres_word_all){
+  switch($sres_number){
+    case 0: $temp = $sres_word_zero;break;
+    case 1: $temp = $sres_word_one;break;
+    case 2: $temp = $sres_word_two;break;
+    default:$temp = $sres_word_all.$sres_number;                                            	    	 
+  }
+  return $temp;
+}
+
+function sres_number_to_txt_first($sres_number,$sres_word_zero,$sres_word_one,$sres_word_two,$sres_word_three,$sres_word_all){
+  switch($sres_number){
+    case 0: $temp = $sres_word_zero;break;
+    case 1: $temp = $sres_word_one;break;
+    case 2: $temp = $sres_word_two;break;
+    case 3:
+    case 4:
+    case 5:
+    case 6:
+    case 7:
+    case 8:
+    case 9:
+    case 10:$temp = $sres_number.' '.$sres_word_three;break;
+    default:$temp = $sres_number.' '.$sres_word_all;                                            	    	 
+  }
+  return $temp;
+}
+
+/**
+ * realesate node type live short view 
+ * 
+ */
+function sres_realesate_update($rs_nid = 0,$tid = NULL,$b_nid = NULL,&$sres_building = NULL,&$sres_building_live = NULL) {
+  $output = '<div id="rs-teaser-'.$rs_nid.'" class="rs-teaser"><ul>';
+  //dsm($tid);
+  
+  $rs_area = db_fetch_object(db_query('SELECT r.field_sres_rs_land_size_value as area FROM {content_type_sres_realesate} r WHERE r.nid = %d;',$rs_nid));
+  if (!$rs_area) return 'هذا العقار غير موجود';
+  $rs_area = $rs_area->area;
+  
+  $asbuilding = '';
+  if ($b_nid) {
+    $item_node = node_load($b_nid);
+    $item_node = node_build_content($item_node);
+    
+    $asbuilding = ' and c.nid = '.$b_nid; 
+    $output = '<div id="rs-teaser-'.$b_nid.'" class="rs-teaser"><ul>';
+  }else{
+    $item_node = node_load($rs_nid);
+    $item_node = node_build_content($item_node);
+  }
+  
+  
+  //dsm($item_node);
+  
+  $sres_building_result = db_query('SELECT n.nid , n.title , c.field_sres_building_floor_value as floors ,c.field_sres_building_struc_area_value as area  
+    FROM {node} n,{content_type_sres_building} c 
+    WHERE n.nid = c.nid and c.field_sres_building_rs_nid = %d '.$asbuilding.';',$rs_nid);
+  $sres_building;
+  while ($sres_building_data = db_fetch_object($sres_building_result)){
+    $sres_temp = array();
+    $sres_temp['nid'] = $sres_building_data->nid;
+    $sres_temp['title'] = $sres_building_data->title;
+    $sres_temp['floor'] = $sres_building_data->floors;
+    $sres_temp['area'] = $sres_building_data->area;
+    $sres_temp['flats'] = 0;
+    $sres_temp['trades'] = 0;
+    $sres_temp['allfloors'] = array();
+    $sres_building[] = $sres_temp;                                              			
+  }
+  
+  if (!$sres_building[0] ) return 'لا يوجد بنايات في هذا العقار';
+  
+  $sres_rs_units_flat_sum = 0;                                            		
+  $sres_rs_units_trade_sum = 0;                                            		
+  
+  $index = 0;
+  foreach ($sres_building as $building) {
+    $sres_building_units_flat_sum = 0;
+    $sres_building_units_trade_sum = 0;   
+    $result = db_query('SELECT c.nid as nid ,n.title,c.field_sres_units_baths_value as baths ,c.field_sres_units_bedrooms_value as rooms ,c.field_sres_units_salon_value as salon ,count(n.nid) as counter ,c.field_sres_units_floor_value as floor ,t.name as term FROM {node} n,{content_type_sres_unit} c,{term_data} t ,{term_node} tn ,{term_hierarchy} th, {vocabulary} v 
+      WHERE n.nid = c.nid and c.field_sres_units_building_nid = %d 
+      AND tn.nid = n.nid 
+      AND th.parent = t.tid 
+      AND tn.tid = th.tid 
+      AND v.vid = t.vid 
+      AND v.name = "انواع العقارات" 
+      AND (t.name = "شقة" or t.name ="شقة مفروشة" or t.name="محل تجاري" or t.name = "غرفة فندقية") GROUP BY c.field_sres_units_floor_value, t.name ;',$building['nid']);
+    while ( $sres_data = db_fetch_object($result)){
+       //dsm($sres_data);
+      if ( !$sres_building[$index]['allfloors'][''.$sres_data->floor] ) $sres_building[$index]['allfloors'][''.$sres_data->floor] = array(
+        'flats' => 0,
+      	'trades' => 0,
+        'floor' => $sres_data->floor,
+        'units'=> array(),
+      );
+            
+      if ( $sres_data->term == 'شقة' || $sres_data->term == 'شقة مفروشة' || $sres_data->term == 'غرفة فندقية' ){
+      	$sres_rs_units_flat_sum = $sres_rs_units_flat_sum + $sres_data->counter;
+      	$sres_building_units_flat_sum = $sres_building_units_flat_sum + $sres_data->counter;
+
+      	$sres_building[$index]['allfloors'][''.$sres_data->floor]['flats'] = $sres_building[$index]['allfloors'][''.$sres_data->floor]['flats'] + $sres_data->counter;
+      	
+      	$sres_building[$index]['allfloors'][''.$sres_data->floor]['units'][''.$sres_data->nid] = array(
+      	  'nid' => $sres_data->nid,
+      	  'title' => $sres_data->title,
+      	  'rooms' => $sres_data->rooms,
+      	  'baths' => $sres_data->baths,
+      	  'salon' => $sres_data->salon,
+      	  'term' => 'شقة',
+      	);
+      	 
+      	    	
+      	//dsm($sres_data->counter);
+      } 
+      else if ($sres_data->term == 'محل تجاري'){
+        $sres_rs_units_trade_sum = $sres_rs_units_trade_sum + $sres_data->counter;
+        $sres_building_units_trade_sum = $sres_building_units_trade_sum + $sres_data->counter;
+        
+      	$sres_building[$index]['allfloors'][''.$sres_data->floor]['trades'] = $sres_building[$index]['allfloors'][''.$sres_data->floor]['trades'] + $sres_data->counter;
+
+      	$sres_building[$index]['allfloors'][''.$sres_data->floor]['units'][''.$sres_data->nid] = array(
+      	  'nid' => $sres_data->nid,
+      	  'rooms' => $sres_data->rooms,
+      	  'baths' => $sres_data->baths,
+      	  'salon' => $sres_data->salon,
+      	  'term' => 'محل تجاري',
+      	);
+      } 	 
+      	                                       				
+    }
+    $sres_building[$index]['flats'] = $sres_building_units_flat_sum;
+    $sres_building[$index]['trades'] = $sres_building_units_trade_sum;
+    
+    
+     
+    $index++;
+  }
+  //dsm($sres_building);
+ 
+  
+  $tnid = 'tn.tid';
+  if ( $tid ) $tnid = ''.$tid;
+  $temp_rs_nid = $rs_nid;
+  if ($b_nid) $temp_rs_nid = $b_nid;
+  
+  $result = db_query('SELECT t.name as term FROM {term_data} t ,{term_hierarchy} th,{term_node} tn,{vocabulary} v
+    WHERE th.parent = t.tid                                            				 
+    AND th.tid = '.$tnid.'
+    AND v.vid = t.vid 
+    AND v.name = "انواع العقارات"
+    AND tn.nid = %d;',$temp_rs_nid);
+  $data_term = db_fetch_object($result);
+  
+  if (!$data_term) { 
+    $data_term = array();
+    $data_term->term = 'عمارة';
+  }
+  
+  //$output = $output.$data_term->term;
+  //عرض العقار على اساس عدد البيايات و نوع العقار  
+  if ( $sres_building[0] && !$sres_building[1] && $data_term->term == 'عمارة'){
+  
+    $output = $output.'<li>'.sres_number_to_txt_first($sres_building[0]['floor'],'طابق ارضي','طابق واحد','طابقين','طوابق','طابق').'</li>';
+    $output = $output.'<li>'.$sres_rs_units_flat_sum.' شقة ،'.$sres_rs_units_trade_sum.' محل تجاري</li>';
+    
+  }else if($sres_building[1] && !$sres_building[2] && $data_term->term == 'عمارة'){
+  
+    $output = $output.'<li> بناية'.sres_number_to_txt_first($sres_building[0]['floor'],'طابق ارضي','طابق واحد','طابقين','طوابق','طابق').' ،
+    بناية '.sres_number_to_txt_first($sres_building[1]['floor'],'طابق ارضي','طابق واحد','طابقين','طوابق','طابق');
+    $output = $output.'<li>'.$sres_rs_units_flat_sum.' شقة ،'.$sres_rs_units_trade_sum.' محل تجاري</li>';
+                                                			
+  }else if ($sres_building[2]  && $data_term->term == 'عمارة'){
+  
+    $output = $output.'<li>'.sizeof($sres_building).' بنايات: ';
+    foreach ($sres_building as $building){
+      $output = $output.' ، '.sres_number_to_txt_first($building['floor'],'طابق ارضي','طابق واحد','طابقين','طوابق','طابق');                                            				
+    }
+    $output = $output.'<li>'.$sres_rs_units_flat_sum.' شقة ،'.$sres_rs_units_trade_sum.' محل تجاري</li>';
+    $output = $output.'</li>';
+      
+  }
+  
+  if ( $data_term->term == 'منزل') {//content_type_sres_unit
+   //جلب المباني السكنية
+    $sres_building_live_result = db_query('SELECT n.nid , n.title , c.field_sres_building_floor_value as floors  FROM {node} n,{content_type_sres_building} c,{content_type_sres_unit} u ,{flags} f,{flag_content} fc
+      WHERE n.nid = c.nid 
+      AND c.nid = u.field_sres_units_building_nid
+      AND f.name = \'sres_live\'
+      AND f.fid = fc.fid
+      AND u.nid = fc.content_id 
+      AND c.field_sres_building_rs_nid = %d '.$asbuilding.' GROUP BY c.nid ;',$rs_nid); 
+  	$sres_building_live;
+  	while ($sres_building_data = db_fetch_object($sres_building_live_result)){
+      $sres_temp = array();
+      $sres_temp['nid'] = $sres_building_data->nid;
+      $sres_temp['title'] = $sres_building_data->title;
+      $sres_temp['floor'] = $sres_building_data->floors;
+      $sres_temp['flats'] = 0;
+      $sres_temp['trades'] = 0;
+      $sres_temp['allfloors'] = array();      
+      $sres_building_live[] = $sres_temp;      
+      //$output = $output.$sres_temp['title'];                                              			
+    }
+    $sres_live_numbers = sizeof($sres_building_live); 
+        
+    //عدد الشقق و المحلات التجارية للمباني السكنية على حدى
+    $index = 0;
+    if ($sres_building_live) 
+      foreach ($sres_building_live as $building) {
+        $sres_building_units_flat_sum = 0;
+        $sres_building_units_trade_sum = 0;   
+        $result = db_query('SELECT c.nid as nid ,c.field_sres_units_baths_value as baths ,c.field_sres_units_bedrooms_value as rooms ,c.field_sres_units_salon_value as salon ,count(n.nid) as counter ,c.field_sres_units_floor_value as floor ,t.name as term 
+          FROM {node} n,{content_type_sres_unit} c,{term_data} t ,{term_node} tn ,{term_hierarchy} th, {vocabulary} v,{flags} f,{flag_content} fc 
+          WHERE n.nid = c.nid and c.field_sres_units_building_nid = %d
+          AND f.name = \'sres_live\'
+          AND f.fid = fc.fid
+          AND c.nid = fc.content_id
+          
+          AND tn.nid = n.nid 
+          AND th.parent = t.tid 
+          AND tn.tid = th.tid 
+          AND v.vid = t.vid 
+          AND v.name = "انواع العقارات" 
+          AND (t.name = "شقة" or t.name ="شقة مفروشة" or t.name="محل تجاري" or t.name = "غرفة فندقية") GROUP BY t.name ,c.field_sres_units_floor_value ;',$building['nid']);
+        while ( $sres_data = db_fetch_object($result)){
+          if ( !$sres_building_live[$index]['allfloors'][''.$sres_data->floor] ) $sres_building_live[$index]['allfloors'][''.$sres_data->floor] = array(
+            'flats' => 0,
+      	    'trades' => 0,
+            'baths'=>0,
+            'rooms'=>0, 
+            'floor' => $sres_data->floor,
+            'units'=> array(),
+          );  
+        
+          if ( $sres_data->term == 'شقة' || $sres_data->term == 'شقة مفروشة' || $sres_data->term == 'غرفة فندقية' ){
+            //$sres_rs_units_flat_sum = $sres_rs_units_flat_sum + $sres_data->counter;
+      	    $sres_building_units_flat_sum = $sres_building_units_flat_sum + $sres_data->counter;
+
+      	    $sres_building_live[$index]['allfloors'][''.$sres_data->floor]['flats'] = $sres_building_live[$index]['allfloors'][''.$sres_data->floor]['flats'] + $sres_data->counter;
+       	    //dsm($sres_data->counter);
+       	    
+      	    $sres_building_live[$index]['allfloors'][''.$sres_data->floor]['units'][''.$sres_data->nid] = array(
+      	      'nid' => $sres_data->nid,
+      	      'rooms' => $sres_data->rooms,
+      	      'baths' => $sres_data->baths,
+      	      'salon' => $sres_data->salon,
+      	      'term' => 'شقة',
+      	    );
+      	  
+          } 
+          else if ($sres_data->term == 'محل تجاري'){
+            //$sres_rs_units_trade_sum = $sres_rs_units_trade_sum + $sres_data->counter;
+            $sres_building_units_trade_sum = $sres_building_units_trade_sum + $sres_data->counter;
+
+            $sres_building_live[$index]['allfloors'][''.$sres_data->floor]['trades'] = $sres_building_live[$index]['allfloors'][''.$sres_data->floor]['trades'] + $sres_data->counter;
+            
+            
+            $sres_building_live[$index]['allfloors'][''.$sres_data->floor]['units'][''.$sres_data->nid] = array(
+      	      'nid' => $sres_data->nid,
+              'rooms' => $sres_data->rooms,
+      	      'baths' => $sres_data->baths,
+      	      'salon' => $sres_data->salon,
+      	      'term' => 'محل تجاري',
+      	    );
+          }                                             				
+        }
+        $sres_building_live[$index]['flats'] = $sres_building_units_flat_sum;
+        $sres_building_live[$index]['trades'] = $sres_building_units_trade_sum;
+    
+        $index++;
+     }
+     //dsm($sres_building_live);
+    //جلب الطوابق السكنية
+    $sres_unit_live_result = db_query('SELECT n.nid , n.title ,count(u.field_sres_units_floor_value) as floors, sum(field_sres_units_bedrooms_value) as rooms , sum(field_sres_units_baths_value) as baths ,u.field_sres_units_building_nid as bnid ,u.field_sres_units_floor_value as floor FROM {node} n,{content_type_sres_unit} u ,{flags} f,{flag_content} fc,{content_type_sres_building} c
+      WHERE n.nid = u.nid
+      AND c.nid = u.field_sres_units_building_nid      
+      AND f.name = \'sres_live\'
+      AND f.fid = fc.fid
+      AND u.nid = fc.content_id 
+      AND c.field_sres_building_rs_nid = %d '.$asbuilding.' GROUP BY u.field_sres_units_floor_value,u.field_sres_units_building_nid;',$rs_nid);
+    $sres_unit_live;
+    //جلب بيانات الطوابط متضمنه عدد الغرف و الجمامات لكل طابق على حده
+    $sres_rs_baths_live = 0;
+    $sres_rs_rooms_live = 0;
+    //dsm($sres_building_live);
+    //dsm(get_array_index($sres_building_live,29));
+    while ($sres_unit_data = db_fetch_object($sres_unit_live_result)){
+      $sres_temp = array();
+      //
+      $sres_temp['nid'] = $sres_unit_data->nid;
+      $sres_temp['title'] = $sres_unit_data->title; 
+      $sres_temp['baths'] =  $sres_unit_data->baths;
+      $sres_rs_baths_live = $sres_rs_baths_live + $sres_temp['baths'];
+      $sres_temp['rooms'] =  $sres_unit_data->rooms;
+      $sres_rs_rooms_live = $sres_rs_rooms_live + $sres_temp['rooms'];
+      
+      for ($index = 0; $index < $sres_live_numbers; $index++){        
+        if ($sres_unit_data->bnid == $sres_building_live[$index]['nid']  ){
+          $sres_building_live[$index]['allfloors'][''.$sres_unit_data->floor]['baths'] = $sres_building_live[$index]['allfloors'][''.$sres_unit_data->floor]['baths'] + $sres_temp['baths'];
+          $sres_building_live[$index]['allfloors'][''.$sres_unit_data->floor]['rooms'] = $sres_building_live[$index]['allfloors'][''.$sres_unit_data->floor]['rooms'] + $sres_temp['rooms'];
+          $sres_building_live[$index]['allfloors'][''.$sres_unit_data->floor]['floor'] = $sres_unit_data->floor;
+        }
+      }
+      
+      //if ($sres_building_live[$sres_unit_data])
+      
+      $sres_unit_live[] = $sres_temp;      
+      //$output = $output.$sres_unit_data->floors;                                              			
+    }
+    
+    //dsm($sres_building_live);
+    
+    $output = $output.'<li>'.$sres_live_numbers.'  بناية سكنية '.(sizeof($sres_unit_live)).' طابق سكني</li>';    
+    
+    //حساب الشقق و المحلات في البتايات السكنية    
+    $sres_rs_units_flat_sum_live = 0; 
+    $sres_rs_units_trade_sum_live = 0;
+    
+    $sres_rs_units_flat_sum_nonlive = 0;                                            		
+    $sres_rs_units_trade_sum_nonlive = 0;
+    
+    $sres_building_number = sizeof($sres_building);
+    
+    //dsm($sres_building);
+    //dsm($sres_building_live);
+    
+    
+    for($index = 0; $index<$sres_building_number; $index++){
+      if ( $sres_building[$index]['nid'] == $sres_building_live[$index]['nid'] ){
+        //dsm($sres_building[$index]['flats']);
+        $sres_rs_units_flat_sum_live = $sres_rs_units_flat_sum_live + $sres_building[$index]['flats']-$sres_building_live[$index]['flats'];
+        $sres_rs_units_trade_sum_live = $sres_rs_units_trade_sum_live +  $sres_building[$index]['trades']-$sres_building_live[$index]['trades'];
+      }else {
+        $sres_rs_units_flat_sum_nonlive = $sres_rs_units_flat_sum_nonlive + $sres_building[$index]['flats'];
+        $sres_rs_units_trade_sum_nonlive = $sres_rs_units_trade_sum_nonlive + $sres_building[$index]['trades'];
+      }
+    }
+    $output = $output.'<li>'.$sres_rs_units_flat_sum_live.'  شقة '.$sres_rs_units_trade_sum_live.' محل تجاري</li>';
+    $output = $output.'<li>'.$sres_rs_rooms_live.'  غرفة '.$sres_rs_baths_live.' حمام</li>';
+    //dsm(drupal_render($item_node->content['group_sres_building_struc']['group']['field_sres_building_struc_area']));
+    if ($b_nid) return $output.'<li> المساحة: '.$sres_building[0]['area'].' '.'متر مربع'.'</li></ul></div>';
+    
+    $output = $output.'<li>'.($sres_building_number-$sres_live_numbers).' بناية'.'</li>';
+    $output = $output.'<li>'.$sres_rs_units_flat_sum_nonlive.'  شقة '.$sres_rs_units_trade_sum_nonlive.' محل تجاري</li>';
+  }
+  
+  //عرض مقتطف الأرض 
+  if ($data_term->term == 'أرض') {
+     $output .= 'الأرض';
+  }
+  
+  //dsm(drupal_render($item_node->content['group_sres_rs_land']['group']['field_sres_rs_land_size']));
+  if ($b_nid) return $output.'<li> المساحة: '.$sres_building[0]['area'].' '.'متر مربع'.'</li></ul></div>';
+  return $output.'<li> المساحة: '.$rs_area.' '.'متر مربع'.'</li></ul></div>';
+}
+
+
+/**
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ */
+function sres_realesate_update_details($rs_nid = 0,$tid = NULL,$b_nid = NULL,&$sres_building = NULL,&$sres_building_live = NULL) {
+  $output = '';
+  
+  sres_realesate_update($rs_nid,$tid,$b_nid,&$sres_building,&$sres_building_live);
+
+  $can_accsess = FALSE;  
+  if (user_access('add real-estate') == TRUE ) $can_accsess = TRUE;
+  
+  
+  $output =  $output . '<div class="squeeze">';
+  $output =  $output .	'<p class="title">'.'المكونات'.'</p><div class="body">';
+  
+  //drupal_add_js(base_path().'misc/collapse.js');
+  
+    
+  //عرض تفاصيل المباني السكنية و غير السكنية
+  $index = 0;
+  if ($sres_building)
+    foreach($sres_building as $building) {
+      $output =  $output . '<div class="squeeze">';
+      if (!$b_nid) {      
+        $output =  $output .	'<p class="building">';
+        if ($can_accsess) $output =  $output .'<a href="'.base_path().'node/'.$building['nid'].'">';
+  	    $output =  $output .'مبنى ('.($index+1).')';
+  	    if ($can_accsess) $output =  $output .'</a>';
+  	    $output =  $output .'</p>';  	    
+      }else if($can_accsess){        
+        $output =  $output .	'<p class="building">';
+        $output =  $output .'<a href="'.base_path().'node/'.$rs_nid.'">';
+  	    $output =  $output .'العقار الأب';
+  	    $output =  $output .'</a>';
+  	    $output =  $output .'</p>';
+      }
+      
+  	  $output =  $output .'<div class="body">';
+  	  if ($building['allfloors']){
+  	    $floor_row = 'rswhite';  	     	    
+  	    $output =  $output .'<ul>';  	    
+  	    foreach($building['allfloors'] as $floor_all) {
+  	      if ($floor_row == 'altrow') $floor_row = 'rswhite';
+  	      else $floor_row = 'altrow';	      
+	      $floor = $sres_building_live[$index]['allfloors'][''.$floor_all['floor']];
+
+	      if (($floor_all['trades']-$floor['trades']) > 0 || ($floor_all['flats']-$floor['flats']) > 0) $output =  $output .'<li class="item '.$floor_row.'">'.'<span style="float: left;margin-right: -323px;">'.$floor['rooms'].'  غرفة - '.$floor['baths'].' حمام - '.($floor_all['flats']-$floor['flats']).' شقة - '.($floor_all['trades']-$floor['trades']).' محل تجاري '.'</span><fieldset class="collapsible collapsed"><legend>'.' الطابق '.sres_number_to_txt_word($floor_all['floor']).'</legend><div>';
+		  else $output =  $output .'<li class="item '.$floor_row.'"><span>'.' الطابق '.sres_number_to_txt_word($floor_all['floor']).'</span>'.$floor['rooms'].'  غرفة - '.$floor['baths'].' حمام - '.($floor_all['flats']-$floor['flats']).' شقة - '.($floor_all['trades']-$floor['trades']).' محل تجاري </li>';		  
+		  
+		  		  
+		  
+		  $output =  $output .'<ul>';
+		  		  
+		  
+		  $units_counter = 0;
+		  $unit_term = '';
+		  $floor_row_keep = $floor_row;
+		  foreach($floor_all['units'] as $unit) {		    
+		    if ($unit['nid'] != $floor['units'][''.$unit['nid']]['nid']) {
+		      if ($floor_row == 'altrow') $floor_row = 'rswhite';
+  	          else $floor_row = 'altrow';
+		    
+		      $output =  $output .'<li class="item  '.$floor_row.'"><span>';
+		      if ($can_accsess) $output =  $output .'<a href="'.base_path().'node/'.$unit['nid'].'">';
+		      if ($unit_term != $unit['term']) $units_counter = 0;
+		      $output =  $output . $unit['term'].' ('.($units_counter+1).')';
+		      if ($can_accsess) $output =  $output .'</a>';
+		      $output =  $output.' </span>'.$unit['rooms'].'  غرفة - '.$unit['baths'].' حمام - '.$unit['salon'].'</li>';
+		      $unit_term = $unit['term'];
+		      $units_counter++;
+		    }
+		  }
+		  $floor_row = 	$floor_row_keep;	  
+		  $output =  $output .'</ul>';
+		  
+		  
+		  if (($floor_all['trades']-$floor['trades']) > 0 || ($floor_all['flats']-$floor['flats']) > 0) $output =  $output .'</div></fieldset></li>';		   
+  	    }
+  	  }
+  	  $output =  $output .'</ul>';
+  	  $output =  $output .	'</div>';
+      $output =  $output .'</div>';
+      	      
+      $index++;
+    }  
+			
+  $output =  $output .	'</div>';
+  $output =  $output .'</div>'; 
+  
+  return $output;
+
+}
+
+
+/**
+ * building node type live short view 
+ * 
+ */
+function sres_building_update($b_nid = 0,$tid = NULL) {
+  $output = '';
+     
+  $output = $output.sres_realesate_update(db_fetch_object(db_query('SELECT b.field_sres_building_rs_nid as nid FROM {content_type_sres_building} b WHERE  b.nid = %d',$b_nid))->nid,$tid,$b_nid);
+  
+  return $output;
+}
+/**
+ * 
+ * 
+ */
+function sres_building_update_details($b_nid = 0,$tid = NULL,&$sres_building = NULL,&$sres_building_live = NULL,&$rs_id = NULL) {
+  $output = '';
+  $rs_id = db_fetch_object(db_query('SELECT b.field_sres_building_rs_nid as nid FROM {content_type_sres_building} b WHERE  b.nid = %d',$b_nid))->nid;   
+  $output = $output.sres_realesate_update_details($rs_id,$tid,$b_nid,$sres_building,$sres_building_live);
+  
+  return $output;
+}
+
+
+
+
+
+
+
+function sres_number_to_txt_word($no,$zero ='الأرضي') {
+  switch ($no) {
+    case 0: return $zero;
+    case 1: return 'الأول';
+    case 2: return 'الثاني';
+    case 3: return 'الثالث';
+    case 4: return 'الرابع';
+    case 5: return 'الخامس';
+    case 6: return 'السادس';
+    case 7: return 'السابع';
+    case 8: return 'الثامن';
+    case 9: return 'التاسع';
+    case 10: return 'العاشر';
+    case 11: return 'الحادي عشر';
+    case 12: return 'الثاني عشر';
+    default: return $no;
+  }
+}
+function sres_unit_update($u_nid = 0,$tid = NULL) {
+  $output = '<div id="rs-teaser-'.$u_nid.'" class="rs-teaser"><ul>';
+  
+  $unit = db_fetch_object(db_query('SELECT u.nid , field_sres_units_baths_value as baths ,field_sres_units_bedrooms_value as rooms ,field_sres_units_salon_value as salon, field_sres_units_frsh_frsh_value as frsh ,field_sres_units_area_value as area ,field_sres_units_floor_value as floor   FROM {content_type_sres_unit} u WHERE u.nid = %d;',$u_nid));
+  
+  if (!$unit) return '';
+  
+  $output = $output .'<li> الطابق '. sres_number_to_txt_word($unit->floor).' ';
+  
+  $tnid = 'tn.tid';
+  if ( $tid ) $tnid = ''.$tid;  
+  
+  $result = db_query('SELECT t.name as term FROM {term_data} t ,{term_hierarchy} th,{term_node} tn,{vocabulary} v
+    WHERE th.parent = t.tid                                            				 
+    AND th.tid = '.$tnid.'
+    AND v.vid = t.vid 
+    AND v.name = "انواع العقارات"
+    AND tn.nid = %d;',$u_nid);
+  $data_term = db_fetch_object($result);
+  
+  if (!$data_term) { 
+    $data_term = array();
+    $data_term->term = 'شقة';
+  }
+  
+  $output = $output .'<li>'.$unit->rooms.' غرفة ';
+  $output = $output .''.$unit->baths.' حمام ،';
+  
+  if ($unit->salon == 'صالون') $output = $output .' '.$unit->salon.' </li>';
+  
+  
+  if ($data_term->term == 'شقة مفروشة' || $data_term->term == 'غرفة فندقية'){
+    $output = $output.'<li> الفرش '.$unit->frsh.'</li>';
+  } 
+                                              	    	 
+  $output = $output.'<li> المساحة: '.$unit->area.' '.'متر مربع'.'</li>'; 
+  
+  return $output.'</ul></div>';
+}
+
+
+//function sres_theme_registry_alter(&$theme_registry) {
+  //   using our own block.tpl.php file.
+  //dsm($theme_registry['views']['template']);
+  /*$theme_registry['block']['template'] = 'block';
+  $theme_registry['block']['path'] = drupal_get_path('module', 'example_module');
+  $theme_registry['block']['type'] = 'module';
+  $theme_registry['block']['theme path'] = drupal_get_path('module', 'example_module');
+  $theme_registry['block']['theme paths'] = Array();*/
+//} 
+
+
+
+
+
+/**
+* Display a views 
+*/
+/*function sres_views_view_unformatted($view) {//Slideshow
+  $output = '';
+  //dsm($field_alias);
+  switch($view->name){
+    case 'sres_rs_details':
+    case 'sres_building_details':
+    case 'sres_details':
+      //$output .= sres_views_slideshow_jcarouselthumbs($view);
+      $output .= $view->style_plugin->rendered_fields[0]['phpcode'];      
+          
+  }  
+  return $output;
+}*/
+
+/*function sres_views_slideshow_jcarouselthumbs(){
+  return 'test';
+}*/
+
+
+
+/**
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ * 
+ */
+function sres_rs_price($nid = 0, $sale = 0, $rent = 0) {
+  if (arg(2) == 'sale'){
+    $node = node_load($nid);
+    $terms = taxonomy_node_get_terms($node);
+    //dsm($terms);
+    foreach($terms as $term){
+      if ($term->name == 'للبيع') return number_format($sale).' '.'جنيه';                                        
+    }
+  }
+  return number_format($rent).' '.'جنيه';
+}
+
+
+
+
+
+function sres_location_node_page($nid = NULL) {
+
+  $nodemap = variable_get('gmap_node_map', _gmap_location_node_map_defaults());
+  $markertypes = variable_get('gmap_node_markers', array());
+
+  $map = array_merge(
+    gmap_defaults(),
+    gmap_parse_macro($nodemap['macro']));
+
+  $mode = $nodemap['markermode'];
+  $map['rmtcallback'] = url('map/node/load');
+  $map['markermode'] = $nodemap['markermode'];
+
+  if (!isset($map['markers']) || !is_array($map['markers'])) {
+    $map['markers'] = array();
+  }
+
+  $marker_sql1 = '';
+  $marker_sql2 = '';
+  if (module_exists('gmap_taxonomy')) {
+    $marker_sql1 = ', m.marker';
+    $marker_sql2 = 'LEFT JOIN {gmap_taxonomy_node} m ON n.vid = m.vid';
+  }
+
+  $add_sql = (is_numeric($nid) && $nid > 0) ? ' AND n.nid = %d' : '';
+  $result = db_query(db_rewrite_sql("
+    SELECT n.nid, n.type, n.title, l.latitude, l.longitude $marker_sql1
+    FROM {node} n
+    INNER JOIN {location_instance} i
+      ON n.vid = i.vid
+    INNER JOIN {location} l
+      ON l.lid = i.lid
+    $marker_sql2
+    WHERE
+      n.status = 1
+    AND
+      (l.latitude != 0 OR l.longitude != 0)
+    ". $add_sql), $nid);
+
+  $count = 0;
+  while ($row = db_fetch_object($result)) {
+    $count++;
+    $newmarker = array();
+    if ($mode == 1) {
+      // Popup
+      $newmarker['rmt'] = $row->nid .'/0';
+    }
+    elseif ($mode == 2) {
+      // Link
+      $newmarker['link'] = url('node/'. $row->nid);
+    }
+
+    $newmarker['latitude'] = $row->latitude;
+    $newmarker['longitude'] = $row->longitude;
+    $newmarker['markername'] = isset($markertypes[$row->type]) ? $markertypes[$row->type] : 'drupal';
+    if (isset($row->marker) && !empty($row->marker)) {
+      $newmarker['markername'] = $row->marker;
+    }
+    $newmarker['opts']['title'] = $row->title;
+    $map['markers'][] = $newmarker;
+  }
+
+  // Special stuff for single marker
+  if ($count == 1) {
+    // Center map on only marker.
+    $map['latitude'] = $map['markers'][0]['latitude'];
+    $map['longitude'] = $map['markers'][0]['longitude'];
+
+    // Autoclick in single marker case.
+    if ($mode == 1) {
+      $map['markers'][0]['autoclick'] = TRUE;
+    }
+  }
+
+  // Special cases for single node view.
+  if (is_numeric($nid) && $node = node_load($nid)) {
+
+    // Organic groups. Group nodes are displayed as a map of the users who belong to the group.
+    if (user_access('view user location details') && function_exists('og_is_group_type') && og_is_group_type($node->type)) {
+      $rolemarkers = variable_get('gmap_role_markers', array());
+
+      $map['markers'] = array(); // Reset markers.
+
+      $result = db_query("
+        SELECT
+          MAX(r.rid) as role, i.uid, l.latitude, l.longitude
+        FROM
+          {og_uid} o
+        INNER JOIN {location_instance} i
+          ON i.uid = o.uid
+        INNER JOIN {location} l
+          ON l.lid = i.lid
+        LEFT JOIN {users_roles} r
+          ON i.uid = r.uid
+        WHERE
+          o.nid = %d
+        AND
+          o.is_active >= 1
+        AND
+          (l.latitude != 0 OR l.longitude != 0)
+        GROUP BY
+          o.uid", $nid, 'user');
+
+      while ($row = db_fetch_object($result)) {
+        $newmarker = array();
+        $newmarker['rmt'] = $nid .'/'. $row->uid;
+
+        // Determine marker type to show.
+        $newmarker['markername'] = $markertypes[DRUPAL_AUTHENTICATED_RID];
+        if ($row->role && isset($rolemarkers[$row->role])) {
+          $newmarker['markername'] = $rolemarkers[$row->role];
+        }
+        $newmarker['latitude'] = $row->latitude;
+        $newmarker['longitude'] = $row->longitude;
+        $map['markers'][] = $newmarker;
+      }
+    }
+  }
+  $sres_map = array(
+    'markers' => array(),    
+    'latitude' => NULL,   // Center the map
+    'longitude' => NULL, // on the marker.
+  );
+  $sres_map['markers'] = $map['markers'];
+  $sres_map['latitude'] = $map['markers'][0]['latitude'];
+  $sres_map['longitude'] = $map['markers'][0]['longitude'];
+  return //theme('gmap_location_node_page',
+    //$count,
+    //$nodemap['header'],
+    theme('gmap', array('#settings' => $sres_map));//,
+    //$nodemap['footer']
+  //);
+}
+
