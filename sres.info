@@ -1,0 +1,9 @@
+name = sres
+description = (Sudan Real-EState) Drupal module allows users to create, modify, and delete realestate nodes , targeting Arab end-users.
+core = 6.x
+; Information added by drupal.org packaging script on 2010-12-04
+dependencies[] = jquery_ui
+version = "6.x-1.x-dev"
+core = "6.x"
+project = "sres"
+datestamp = "1291421922"
